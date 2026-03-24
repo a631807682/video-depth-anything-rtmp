@@ -132,40 +132,7 @@ def create_sbs(frame, depth, strength=1.5):
     # 横向拼接
     return np.hstack([left_eye, right_eye])
 
-# TODO:后续需要根据执行时间选择版本
-def create_sbs_half(frame, depth, strength=0.6):
-    """
-    极致优化版 SBS-Half：利用切片实现位移，消除 for 循环
-    """
-    h, w = frame.shape[:2]
-    
-    # 1. 计算全局平均视差 (4090 推理下，建议先用全局偏移测试)
-    # strength * 20 是基础偏移像素量
-    shift = int((depth.mean() / 255.0) * strength * 20.0)
-    
-    # 2. 向量化创建左右眼视图 (切片操作比 np.roll 快得多)
-    left_eye = np.zeros_like(frame)
-    right_eye = np.zeros_like(frame)
-    
-    if shift > 0:
-        # 左眼看到更多左侧内容（向左偏）
-        left_eye[:, :w-shift] = frame[:, shift:]
-        # 右眼看到更多右侧内容（向右偏）
-        right_eye[:, shift:] = frame[:, :w-shift]
-    else:
-        left_eye, right_eye = frame.copy(), frame.copy()
-    
-    # 3. 关键：横向拼接后一次性 Resize
-    # 这样可以减少一次 cv2.resize 的调用开销
-    combined = np.hstack([left_eye, right_eye]) # 宽度变为 2W
-    
-    # 缩放到原始宽度 W，实现 SBS-Half 效果
-    sbs_half = cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
-    
-    return sbs_half
-
-# TODO:后续需要根据执行时间选择版本
-def create_sbs_half_pro(frame, depth, strength=0.6, convergence=0.5):
+def create_sbs_half(frame, depth, strength=0.6, convergence=0.5):
     """
     convergence: 0.0 ~ 1.0 (0.0=全出屏, 1.0=全入屏, 0.5=平衡)
     """
@@ -215,7 +182,7 @@ def process_frame(frame, device='cuda', output_mode='sbs-half', **kwargs):
         
         # 2. SBS 拼接 (CPU 核心耗时)
         if output_mode == 'sbs-half':
-            out = create_sbs_half_pro(frame, depth, strength=1.2)
+            out = create_sbs_half(frame, depth, strength=1.2)
         elif output_mode == 'sbs':
             out = create_sbs(frame, depth, strength=0.8)
         else:
