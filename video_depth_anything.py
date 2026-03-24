@@ -132,7 +132,8 @@ def create_sbs(frame, depth, strength=1.5):
     # 横向拼接
     return np.hstack([left_eye, right_eye])
 
-def create_sbs_half(frame, depth, strength=1.2):
+# TODO:后续需要根据执行时间选择版本
+def create_sbs_half(frame, depth, strength=0.6):
     """
     极致优化版 SBS-Half：利用切片实现位移，消除 for 循环
     """
@@ -163,6 +164,34 @@ def create_sbs_half(frame, depth, strength=1.2):
     
     return sbs_half
 
+# TODO:后续需要根据执行时间选择版本
+def create_sbs_half_pro(frame, depth, strength=0.6, convergence=0.5):
+    """
+    convergence: 0.0 ~ 1.0 (0.0=全出屏, 1.0=全入屏, 0.5=平衡)
+    """
+    h, w = frame.shape[:2]
+    max_shift = w * 0.02 * strength
+    
+    # 手动定义中性面：0.5 表示深度图中值处在屏幕平面
+    neutral_point = convergence * 255.0
+    disparity = (depth.astype(np.float32) - neutral_point) / 255.0 * max_shift
+    
+    x, y = np.meshgrid(np.arange(w), np.arange(h))
+    x = x.astype(np.float32)
+    y = y.astype(np.float32)
+
+    # 3. 左右眼对半分担位移 (各平移 0.5 倍，总位移不变但拉伸感减小)
+    map_l_x = np.clip(x - disparity * 0.5, 0, w - 1)
+    map_r_x = np.clip(x + disparity * 0.5, 0, w - 1)
+
+    # 4. 重映射
+    left_eye = cv2.remap(frame, map_l_x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    right_eye = cv2.remap(frame, map_r_x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    # 5. SBS 拼接
+    combined = np.hstack([left_eye, right_eye])
+    return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
+
 # --- 调试
 DEBUG_DIR = "debug"
 if not os.path.exists(DEBUG_DIR):
@@ -186,9 +215,9 @@ def process_frame(frame, device='cuda', output_mode='sbs-half', **kwargs):
         
         # 2. SBS 拼接 (CPU 核心耗时)
         if output_mode == 'sbs-half':
-            out = create_sbs_half(frame, depth, strength=1.2)
+            out = create_sbs_half_pro(frame, depth, strength=1.2)
         elif output_mode == 'sbs':
-            out = create_sbs(frame, depth, strength=1.2)
+            out = create_sbs(frame, depth, strength=0.8)
         else:
             out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
         t_sbs = time.time()
