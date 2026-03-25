@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 import time
 import sys
+import selectors
+import torch
 
 class FFmpegStreamProcessor:
     """FFmpeg流处理器 - 音视频自动同步版"""
@@ -63,10 +65,37 @@ class FFmpegStreamProcessor:
 
     def read_frames_thread(self, stdout):
         frame_size = self.width * self.height * 3
+
+        # 1. 初始化选择器，监控 stdout 的读取事件
+        selector = selectors.DefaultSelector()
+        selector.register(stdout, selectors.EVENT_READ)
+
+        empty_retry_count = 0
+        max_empty_retry = 10 # 允许约 10 秒的空数据
+
         while self.running:
             try:
+                # 这会让线程在这一行等待，但不会死锁，1秒没数据就会往下走
+                events = selector.select(timeout=1.0)
+                
+                if not events:
+                    # 3. 如果 1 秒内没有任何数据到达
+                    empty_retry_count += 1
+                    if empty_retry_count >= max_empty_retry:
+                        print(f"🛑 [断开] 2D 流已消失超过 {max_empty_retry} 秒，判定为结束")
+                        self.running = False
+                        break
+                    continue # 继续下一轮 select 等待
+
+                # 如果读到空字节（EOF），说明进程已经彻底关了
                 in_bytes = stdout.read(frame_size)
-                if not in_bytes: break
+                if not in_bytes or len(in_bytes) == 0:
+                        self.running = False
+                        break
+
+                # 读到数据了，重置计数器
+                empty_retry_count = 0
+
                 in_frame = np.frombuffer(in_bytes, np.uint8).reshape([self.height, self.width, 3])
                 try:
                     self.frame_queue.put_nowait(in_frame)
@@ -77,7 +106,14 @@ class FFmpegStreamProcessor:
                         self.stats['dropped_frames'] += 1
                     except queue.Empty: pass
                 self.stats['total_frames'] += 1
-            except Exception: break
+            except Exception as e:
+                print(f"读取线程异常: {e}")
+                self.running = False
+                break
+
+        # 退出前注销选择器
+        selector.unregister(stdout)
+        selector.close()
 
     def start_output_stream(self):
         """核心：双输入 FFmpeg 启动逻辑 (视频来自管道, 音频来自原流)"""
@@ -120,14 +156,31 @@ class FFmpegStreamProcessor:
     def write_frames_thread(self, stdin):
         while self.running:
             try:
-                frame = self.output_queue.get(block=True, timeout=0.05)
-                # 最后的安全检查：确保写入 FFmpeg 的尺寸与设置一致
+                # 1. 尝试从队列拿处理好的 3D 帧
+                frame = self.output_queue.get(block=True, timeout=0.1)
+                
+                # 2. 尺寸检查
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
-                stdin.write(frame.tobytes())
-                # stdin.flush() # 4090 高速推流下可省去 flush 以降低 CPU 占用
-            except queue.Empty: continue
-            except Exception: break
+                
+                # 3. 核心：尝试写入管道
+                try:
+                    stdin.write(frame.tobytes())
+                    # 对于 RTMP 这种流，如果不是极高码率，建议保留 flush 确保数据发出
+                    # stdin.flush() 
+                except (BrokenPipeError, OSError) as e:
+                    print(f"🛑 [输出] FFmpeg 管道已关闭 (Broken Pipe)，停止推流")
+                    self.running = False
+                    break
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"⚠️ 写入线程未知异常: {e}")
+                self.running = False
+                break
+        print("✅ 输出线程已安全退出")
+
 
     def process_frames_thread(self, process_func, device='cuda'):
         while self.running:
@@ -165,10 +218,32 @@ class FFmpegStreamProcessor:
         return True
 
     def stop(self):
+        """彻底清理资源，确保下一次重连成功"""
         self.running = False
+        print("🧹 正在清理流处理器资源...")
+
+        # 1. 强制杀掉所有 FFmpeg 进程
         for p in [self.input_process, self.output_process]:
-            if p: p.terminate()
-        print("流处理系统已停止")
+            if p:
+                try:
+                    p.stdin.close() if p.stdin else None
+                    p.terminate()
+                    p.wait(timeout=2) # 等待进程完全释放端口
+                except:
+                    if p: p.kill() # 强制杀死
+
+        # 2. 关键：清空队列，防止旧数据污染新流
+        while not self.frame_queue.empty():
+            try: self.frame_queue.get_nowait()
+            except: break
+        while not self.output_queue.empty():
+            try: self.output_queue.get_nowait()
+            except: break
+
+        # 3. 释放显存
+        torch.cuda.empty_cache()
+        
+        print("✨ 资源清理完成，准备进入下一轮侦听")
 
     def get_status(self):
         return {
