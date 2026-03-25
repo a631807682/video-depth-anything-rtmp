@@ -167,7 +167,7 @@ if not os.path.exists(DEBUG_DIR):
 
 frame_count = 0
 # ---------
-def process_frame(frame, device='cuda', output_mode='sbs-half', **kwargs):
+def process_frame(frame, device='cuda', output_mode='half-sbs', **kwargs):
     """主处理函数 - 精简监控版"""
     try:
         global frame_count
@@ -181,7 +181,7 @@ def process_frame(frame, device='cuda', output_mode='sbs-half', **kwargs):
         t_infer = time.time()
         
         # 2. SBS 拼接 (CPU 核心耗时)
-        if output_mode == 'sbs-half':
+        if output_mode == 'half-sbs':
             out = create_sbs_half(frame, depth, strength=1.2)
         elif output_mode == 'sbs':
             out = create_sbs(frame, depth, strength=0.8)

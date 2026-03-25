@@ -102,9 +102,9 @@ def main():
     # 处理参数
     parser.add_argument(
         "-m", "--mode", 
-        default="sbs-half", 
-        choices=["sbs-half", "sbs"],
-        help="输出模式 (sbs-half: 左右格式压缩, sbs: 左右格式)"
+        default="half-sbs", 
+        choices=["half-sbs", "sbs"],
+        help="输出模式 (half-sbs: 左右格式压缩, sbs: 左右格式)"
     )
     
     parser.add_argument(

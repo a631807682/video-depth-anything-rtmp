@@ -15,7 +15,7 @@ class FFmpegStreamProcessor:
     def __init__(self, input_url, output_url, 
                  width=1920, height=1080, 
                  framerate=30, bitrate="4M",
-                 output_mode='sbs-half'):
+                 output_mode='half-sbs'):
         self.input_url = input_url
         self.output_url = output_url
         self.width = width
