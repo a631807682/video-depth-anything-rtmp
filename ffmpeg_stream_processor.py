@@ -15,7 +15,9 @@ class FFmpegStreamProcessor:
     def __init__(self, input_url, output_url, 
                  width=1920, height=1080, 
                  framerate=30, bitrate="4M",
-                 output_mode='half-sbs'):
+                 output_mode='half-sbs',
+                 strength=1.2, convergence=0.5):
+
         self.input_url = input_url
         self.output_url = output_url
         self.width = width
@@ -23,6 +25,8 @@ class FFmpegStreamProcessor:
         self.framerate = framerate
         self.bitrate = bitrate
         self.output_mode = output_mode
+        self.strength=strength
+        self.convergence=convergence
         
         self.input_process = None
         self.output_process = None
@@ -182,7 +186,7 @@ class FFmpegStreamProcessor:
         print("✅ 输出线程已安全退出")
 
 
-    def process_frames_thread(self, process_func, device='cuda'):
+    def process_frames_thread(self, process_func, device):
         while self.running:
             try:
                 raw_frame = self.frame_queue.get(block=True, timeout=1.0)
@@ -194,7 +198,9 @@ class FFmpegStreamProcessor:
                     except: break
                 
                 start_p = time.time()
-                processed_frame = process_func(raw_frame, device=device, output_mode=self.output_mode)
+                processed_frame = process_func(raw_frame, device=device, output_mode=self.output_mode,
+                    strength=self.strength, convergence=self.convergence)
+
                 p_time = time.time() - start_p
                 
                 if processed_frame is not None:
@@ -213,7 +219,8 @@ class FFmpegStreamProcessor:
         self.running = True
         if not self.start_input_stream(): return False
         if not self.start_output_stream(): return False
-        self.process_thread = threading.Thread(target=self.process_frames_thread, args=(process_func, device), daemon=True)
+        self.process_thread = threading.Thread(target=self.process_frames_thread, 
+            args=(process_func, device), daemon=True)
         self.process_thread.start()
         return True
 

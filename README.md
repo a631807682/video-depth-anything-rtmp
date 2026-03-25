@@ -10,12 +10,24 @@
 python -m venv venv3.12
 source venv/bin/activate
 pip install -r requirements.txt
+
 ```
 
 ### 命令执行
 
 ```bash
 python main.py -i rtmp://127.0.0.1:1935/stream/2d -o rtmp://127.0.0.1:1935/stream/3d -r 30 -b 3M -m half-sbs -d auto
+```
+
+### TensorRT 加速
+
+```bash
+# onnx
+pip install onnx onnxsim
+
+# TensorRT + CuPy
+pip install nvidia-tensorrt cupy-cuda12x
+
 ```
 
 ## 功能特性

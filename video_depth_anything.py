@@ -159,12 +159,9 @@ def create_sbs_half(frame, depth, strength=0.6, convergence=0.5):
     combined = np.hstack([left_eye, right_eye])
     return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
 
-def process_frame(frame, device='cuda', output_mode='half-sbs', **kwargs):
+def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, convergence=0.5, **kwargs):
     """主处理函数 - 精简监控版"""
     try:
-        global frame_count
-        frame_count += 1
-
         t_start = time.time()
         
         # 1. GPU 核心流程：包含 GPU 缩放 + 推理 + GPU 尺寸恢复
@@ -174,9 +171,9 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', **kwargs):
         
         # 2. SBS 拼接 (CPU 核心耗时)
         if output_mode == 'half-sbs':
-            out = create_sbs_half(frame, depth, strength=1.2)
+            out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
         elif output_mode == 'sbs':
-            out = create_sbs(frame, depth, strength=0.8)
+            out = create_sbs(frame, depth, strength=strength)
         else:
             out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
         t_sbs = time.time()

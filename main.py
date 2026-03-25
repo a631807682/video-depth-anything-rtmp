@@ -118,7 +118,10 @@ def main():
         action="store_true", 
         help="显示详细调试信息"
     )
-    
+
+    parser.add_argument('-s', '--strength', type=float, default=1.2, help='3D深度强度 (建议 0.5-2.0)')
+    parser.add_argument('-c', '--convergence', type=float, default=0.5, help='会聚平面 (0.0全出屏, 1.0全入屏)')
+
     args = parser.parse_args()
 
     print("=" * 60)
@@ -129,6 +132,8 @@ def main():
     print(f"视频尺寸: {args.framerate}fps")
     print(f"比特率: {args.bitrate}")
     print(f"输出模式: {args.mode}")
+    print(f"3D深度强度: {args.strength}")
+    print(f"会聚平面: {args.convergence}")
     
     # 设备配置
     if args.device == "auto":
@@ -174,7 +179,9 @@ def main():
             height=stream_h,
             framerate=args.framerate,
             bitrate=args.bitrate,
-            output_mode=args.mode
+            output_mode=args.mode,
+            strength=args.strength,
+            convergence=args.convergence
         )
 
         try:
