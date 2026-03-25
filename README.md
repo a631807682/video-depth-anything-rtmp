@@ -32,7 +32,7 @@ https://huggingface.co/onnx-community/depth-anything-v2-small/
 
 #### tensorrt
 
-```bash
+<!-- ```bash
 # download tensorrt
 ## tensorrt
 https://developer.nvidia.com/nvidia-tensorrt-8x-download
@@ -60,12 +60,14 @@ trtexec --onnx=./pretrained/depth_anything_v2_vits_fp16.onnx \
         --minShapes=pixel_values:1x3x518x518 \
         --optShapes=pixel_values:1x3x518x518 \
         --maxShapes=pixel_values:1x3x518x518
-```
+``` -->
 
 ```bash
 # TensorRT + CuPy
 pip install nvidia-tensorrt cupy-cuda12x
 
+# Engine 与 python 环境强相关，需要自行生成
+python engine_export.py
 ```
 
 ## 功能特性

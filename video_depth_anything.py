@@ -5,6 +5,7 @@ import numpy as np
 import os
 import sys
 import time
+from trt_engine import TRTEngine
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "Depth-Anything-V2"))
 
@@ -12,43 +13,48 @@ from depth_anything_v2.dpt import DepthAnythingV2
 
 # 全局变量
 model = None
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+engine_instance = None
 
-def load_model(device='cuda'):
+def load_model(device='cuda', use_trt=False):
     """加载 Video Depth Anything V2 Small (ViT-S)"""
-    global model
-    print(f"正在加载 Video Depth Anything V2 Small (设备: {device})...")
-    
-    # 1. 关键：ViT-Small 的官方配置参数
-    model_configs = {
-        'encoder': 'vits', 
-        'features': 64, 
-        'out_channels': [48, 96, 192, 384]
-    }
-    
-    # 2. 初始化架构
-    model = DepthAnythingV2(**model_configs)
-    
-    # 3. 权重路径处理
-    path = './pretrained/depth_anything_v2_vits.pth'
-    if not os.path.exists(path):
-        path = 'depth_anything_v2_vits.pth'
-    
-    if os.path.exists(path):
-        try:
-            # 解决 PyTorch 2.6+ 兼容性问题
-            state_dict = torch.load(path, map_location='cpu', weights_only=False)
-            model.load_state_dict(state_dict)
-            print(f"成功加载 ViT-S 视频权重: {path}")
-        except Exception as e:
-            print(f"权重加载失败: {e}")
-            sys.exit(1)
-    else:
-        print(f"错误: 找不到权重文件 {path}，请从 HuggingFace 下载")
-        sys.exit(1)
+    global engine_instance, model
 
-    model.to(device).eval()
-    return model
+    if use_trt:
+        print(f"🚀 正在加载 TensorRT 引擎")
+        engine_instance = TRTEngine(device=device)
+        return engine_instance
+    else:
+        print(f"正在加载 Video Depth Anything V2 Small (设备: {device})...")
+        # 1. 关键：ViT-Small 的官方配置参数
+        model_configs = {
+            'encoder': 'vits', 
+            'features': 64, 
+            'out_channels': [48, 96, 192, 384]
+        }
+        
+        # 2. 初始化架构
+        model = DepthAnythingV2(**model_configs)
+        
+        # 3. 权重路径处理
+        path = './pretrained/depth_anything_v2_vits.pth'
+        if not os.path.exists(path):
+            path = 'depth_anything_v2_vits.pth'
+        
+        if os.path.exists(path):
+            try:
+                # 解决 PyTorch 2.6+ 兼容性问题
+                state_dict = torch.load(path, map_location='cpu', weights_only=False)
+                model.load_state_dict(state_dict)
+                print(f"成功加载 ViT-S 视频权重: {path}")
+            except Exception as e:
+                print(f"权重加载失败: {e}")
+                sys.exit(1)
+        else:
+            print(f"错误: 找不到权重文件 {path}，请从 HuggingFace 下载")
+            sys.exit(1)
+
+        model.to(device).eval()
+        return model
 
 def estimate_depth(frame, device='cuda'):
     """高性能 Forward 版本：全 GPU 预处理与后处理"""
@@ -78,7 +84,7 @@ def estimate_depth(frame, device='cuda'):
             # 输出通常是 [1, H_small, W_small]
             depth = model(img)
             
-        # 4090 必须同步才能测准真实物理耗时
+        # 必须同步才能测准真实物理耗时
         torch.cuda.synchronize()
         t_infer = time.time()
 
@@ -159,25 +165,40 @@ def create_sbs_half(frame, depth, strength=0.6, convergence=0.5):
     combined = np.hstack([left_eye, right_eye])
     return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
 
-def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, convergence=0.5, **kwargs):
+def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, convergence=0.5, use_trt=False, **kwargs):
     """主处理函数 - 精简监控版"""
     try:
         t_start = time.time()
+        t_infer = t_start
         
-        # 1. GPU 核心流程：包含 GPU 缩放 + 推理 + GPU 尺寸恢复
-        # 直接传入原图，由 estimate_depth 内部完成所有显存内操作
-        depth = estimate_depth(frame, device=device)
-        t_infer = time.time()
-        
-        # 2. SBS 拼接 (CPU 核心耗时)
-        if output_mode == 'half-sbs':
-            out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
-        elif output_mode == 'sbs':
-            out = create_sbs(frame, depth, strength=strength)
-        else:
-            out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
-        t_sbs = time.time()
+        if use_trt and engine_instance:
+            # 1. 深度估計 (GPU 內完成)
+            depth = engine_instance.estimate_depth(frame)
+            t_infer = time.time()
+            
+            if output_mode == 'half-sbs':
+                out = engine_instance.create_half_sbs_gpu(frame, depth, strength, convergence)
+            elif output_mode == 'sbs':
+                out_gpu = engine_instance.create_sbs_gpu(frame, depth_gpu, strength, convergence)
+                out = cp.asnumpy(out_gpu).astype(np.uint8)
+            else:
+                out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
 
+        else:
+            # 1. GPU 核心流程：包含 GPU 缩放 + 推理 + GPU 尺寸恢复
+            # 直接传入原图，由 estimate_depth 内部完成所有显存内操作
+            depth = estimate_depth(frame, device=device)
+            t_infer = time.time()
+            
+            # 2. SBS 拼接 (CPU 核心耗时)
+            if output_mode == 'half-sbs':
+                out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
+            elif output_mode == 'sbs':
+                out = create_sbs(frame, depth, strength=strength)
+            else:
+                out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
+
+        t_sbs = time.time()
         # --- 性能监控打印：每 100 帧输出一次 ---
         if getattr(process_frame, 'counter', 0) % 100 == 0:
             total_time = t_sbs - t_start

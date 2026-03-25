@@ -12,11 +12,9 @@ import torch
 class FFmpegStreamProcessor:
     """FFmpeg流处理器 - 音视频自动同步版"""
     
-    def __init__(self, input_url, output_url, 
-                 width=1920, height=1080, 
-                 framerate=30, bitrate="4M",
-                 output_mode='half-sbs',
-                 strength=1.2, convergence=0.5):
+    def __init__(self, input_url, output_url, width=1920, height=1080, 
+                 framerate=30, bitrate="4M", output_mode='half-sbs',
+                 strength=1.2, convergence=0.5, use_trt=False):
 
         self.input_url = input_url
         self.output_url = output_url
@@ -27,6 +25,7 @@ class FFmpegStreamProcessor:
         self.output_mode = output_mode
         self.strength=strength
         self.convergence=convergence
+        self.use_trt = use_trt
         
         self.input_process = None
         self.output_process = None
@@ -199,7 +198,7 @@ class FFmpegStreamProcessor:
                 
                 start_p = time.time()
                 processed_frame = process_func(raw_frame, device=device, output_mode=self.output_mode,
-                    strength=self.strength, convergence=self.convergence)
+                    strength=self.strength, convergence=self.convergence, use_trt=self.use_trt)
 
                 p_time = time.time() - start_p
                 

@@ -121,6 +121,7 @@ def main():
 
     parser.add_argument('-s', '--strength', type=float, default=1.2, help='3D深度强度 (建议 0.5-2.0)')
     parser.add_argument('-c', '--convergence', type=float, default=0.5, help='会聚平面 (0.0全出屏, 1.0全入屏)')
+    parser.add_argument('--trt', action='store_true', help='开启动 TensorRT + CuPy 加速')
 
     args = parser.parse_args()
 
@@ -134,6 +135,7 @@ def main():
     print(f"输出模式: {args.mode}")
     print(f"3D深度强度: {args.strength}")
     print(f"会聚平面: {args.convergence}")
+    print(f"使用 TensorRT 加速: {'是' if args.trt else '否'}")
     
     # 设备配置
     if args.device == "auto":
@@ -144,7 +146,7 @@ def main():
     print(f"处理设备: {device}")
 
     # 加载模型
-    load_model(device=device)
+    load_model(device=device, use_trt=args.trt)
 
     processor = None 
     # 信号处理
@@ -181,7 +183,8 @@ def main():
             bitrate=args.bitrate,
             output_mode=args.mode,
             strength=args.strength,
-            convergence=args.convergence
+            convergence=args.convergence,
+            use_trt=args.trt
         )
 
         try:
