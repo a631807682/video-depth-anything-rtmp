@@ -159,14 +159,6 @@ def create_sbs_half(frame, depth, strength=0.6, convergence=0.5):
     combined = np.hstack([left_eye, right_eye])
     return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
 
-# --- 调试
-DEBUG_DIR = "debug"
-if not os.path.exists(DEBUG_DIR):
-    os.makedirs(DEBUG_DIR)
-    print(f"已创建调试目录: {os.path.abspath(DEBUG_DIR)}")
-
-frame_count = 0
-# ---------
 def process_frame(frame, device='cuda', output_mode='half-sbs', **kwargs):
     """主处理函数 - 精简监控版"""
     try:
@@ -201,21 +193,6 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', **kwargs):
                 print(f"  ⚠️  警告: 当前处理速度低于 30 FPS")
         
         process_frame.counter = getattr(process_frame, 'counter', 0) + 1
-
-        # # --- 调试代码：每100帧保存一张图片到当前目录 ---
-        # if frame_count % 100 == 0:
-        #     # 保存处理后的 SBS 图
-        #     debug_filename = f"debug_frame_{frame_count:05d}_sbs.jpg"
-        #     cv2.imwrite(os.path.join(DEBUG_DIR, debug_filename), out)
-            
-        #     # 保存原始输入图 (对比用)
-        #     original_filename = f"debug_frame_{frame_count:05d}_origin.jpg"
-        #     cv2.imwrite(os.path.join(DEBUG_DIR, original_filename), frame)
-            
-        #     print(f"DEBUG: 已保存原图与处理图到 {DEBUG_DIR} 目录")
-        # # ------------------------------------------
-
-
         return out
 
     except Exception as e:
