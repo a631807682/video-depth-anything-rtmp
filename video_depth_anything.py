@@ -115,55 +115,43 @@ def estimate_depth(frame, device='cuda'):
         
     return depth_np
 
-# --- 3D 转换逻辑 (SBS 模式) ---
-def create_sbs(frame, depth, strength=1.5):
+def create_sbs_generic(frame, depth, strength=0.6, convergence=0.5, is_half=True):
     """
-    创建左右格式 (Side-by-Side)
-    注意：输出宽度将翻倍 (3840x1080)
-    """
-    h, w = frame.shape[:2]
-    # 生成视差（深度越大，位移越大）
-    disparity = (depth.astype(np.float32) / 255.0) * strength * 20.0
-    
-    # 创建左右眼视图
-    left_eye = np.zeros_like(frame)
-    right_eye = np.zeros_like(frame)
-    
-    for i in range(h):
-        shift = disparity[i].astype(np.int32)
-        # 简易视差偏移映射
-        left_eye[i, :] = np.roll(frame[i, :], -5, axis=0) # 基础偏移
-        right_eye[i, :] = np.roll(frame[i, :], 5, axis=0)
-        
-    # 横向拼接
-    return np.hstack([left_eye, right_eye])
-
-def create_sbs_half(frame, depth, strength=0.6, convergence=0.5):
-    """
-    convergence: 0.0 ~ 1.0 (0.0=全出屏, 1.0=全入屏, 0.5=平衡)
+    通用 SBS 生成函数
+    :param is_half: True 为 Half-SBS (1920x1080), False 为 Full-SBS (3840x1080)
     """
     h, w = frame.shape[:2]
+    # 1. 计算最大位移量 (以像素为单位)
     max_shift = w * 0.02 * strength
     
-    # 手动定义中性面：0.5 表示深度图中值处在屏幕平面
+    # 2. 计算视差图 (Disparity Map)
     neutral_point = convergence * 255.0
     disparity = (depth.astype(np.float32) - neutral_point) / 255.0 * max_shift
     
+    # 3. 生成基础网格坐标
     x, y = np.meshgrid(np.arange(w), np.arange(h))
     x = x.astype(np.float32)
     y = y.astype(np.float32)
 
-    # 3. 左右眼对半分担位移 (各平移 0.5 倍，总位移不变但拉伸感减小)
+    # 4. 左右眼重映射坐标计算 (矢量化操作，极快)
     map_l_x = np.clip(x - disparity * 0.5, 0, w - 1)
     map_r_x = np.clip(x + disparity * 0.5, 0, w - 1)
 
-    # 4. 重映射
+    # 5. 执行重映射 (Remap)
     left_eye = cv2.remap(frame, map_l_x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     right_eye = cv2.remap(frame, map_r_x, y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    # 5. SBS 拼接
+    # 6. 横向拼接得到 Full-SBS (2W x H)
     combined = np.hstack([left_eye, right_eye])
-    return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # 7. 根据模式返回结果
+    if is_half:
+        # 压缩宽度到 1xW (左右眼各占一半宽度)
+        return cv2.resize(combined, (w, h), interpolation=cv2.INTER_LINEAR)
+    else:
+        # 保持 2xW (全尺寸左右格式)
+        return combined
+
 
 def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, convergence=0.5, use_trt=False, **kwargs):
     """主处理函数 - 精简监控版"""
@@ -181,12 +169,12 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, co
             t_infer = time.time()
             
             if output_mode == 'half-sbs':
-                out_gpu = engine_instance.create_sbs_half_gpu(frame_gpu, depth_gpu, strength, convergence)
+                out_gpu = engine_instance.create_sbs_generic_gpu(frame_gpu, depth_gpu, strength, convergence, is_half=True)
                 # 统一转回 Numpy
                 out = out_gpu.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
             elif output_mode == 'sbs':
                 # 同样建议实现全宽度的 create_sbs_gpu 以保持高性能
-                out_gpu = engine_instance.create_sbs_gpu(frame_gpu, depth_gpu, strength, convergence)
+                out_gpu = engine_instance.create_sbs_generic_gpu(frame_gpu, depth_gpu, strength, convergence, is_half=False)
                 out = out_gpu.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
             else:
                 # 伪彩色映射 (目前在 CPU 上更快)
@@ -200,9 +188,9 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, co
             
             # 2. SBS 拼接 (CPU 核心耗时)
             if output_mode == 'half-sbs':
-                out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
+                out = create_sbs_generic(frame, depth, strength, convergence, is_half=True)
             elif output_mode == 'sbs':
-                out = create_sbs(frame, depth, strength=strength)
+                out = create_sbs_generic(frame, depth, strength, convergence, is_half=False)
             else:
                 out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
 

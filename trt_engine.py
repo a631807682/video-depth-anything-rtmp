@@ -73,7 +73,7 @@ class TRTEngine:
 
             return depth_gpu # 返回 [1, 1, H, W]
 
-    def create_sbs_half_gpu(self, frame_gpu, depth_gpu, strength=0.6, convergence=0.5):
+    def create_sbs_generic_gpu(self, frame_gpu, depth_gpu, strength=0.6, convergence=0.5, is_half=True):
         # 统一维度
         if frame_gpu.dim() == 3:
             frame_gpu = frame_gpu.unsqueeze(0)
@@ -103,49 +103,13 @@ class TRTEngine:
         left_eye = torch.nn.functional.grid_sample(frame_gpu, shift_l, mode='bilinear', padding_mode='border', align_corners=True)
         right_eye = torch.nn.functional.grid_sample(frame_gpu, shift_r, mode='bilinear', padding_mode='border', align_corners=True)
 
+        # 横向拼接 [1, 3, H, 2W]
         combined = torch.cat([left_eye, right_eye], dim=3)
-        return torch.nn.functional.interpolate(combined, size=(h, w), mode='bilinear', align_corners=False)
 
-
-    # TODO: 暂未修改效果不佳
-    def create_sbs_gpu(self, frame, depth_gpu, strength=0.6, convergence=0.5):
-        """全 GPU 高精度视差拼接 (2W x H)"""
-        h, w = frame.shape[:2]
-        
-        # 1. 确保输入数据为 float32 精度，防止 fp16 导致的计算舍入模糊
-        # frame_torch: [1, 3, H, W]
-        frame_torch = torch.as_tensor(frame.copy(), device='cuda').permute(2, 0, 1).unsqueeze(0).float()
-        depth_f32 = depth_gpu.float() # 深度图转为 f32 确保位移计算精准
-
-        # 2. 计算像素级位移 (Disparity)
-        max_shift = w * 0.02 * strength
-        neutral_point = convergence * 255.0
-        disparity = (depth_f32 - neutral_point) / 255.0 * max_shift
-        
-        # 3. 构建标准化的采样网格 (Grid)
-        # PyTorch 的 grid 范围必须在 [-1.0, 1.0]
-        grid_y, grid_x = torch.meshgrid(
-            torch.linspace(-1, 1, h, device='cuda'),
-            torch.linspace(-1, 1, w, device='cuda'),
-            indexing='ij'
-        )
-
-        # 核心：将像素位移转换为归一化单位 (2.0 / (w-1) 表示单像素在 [-1,1] 间的跨度)
-        shift_norm = (disparity * 0.5) * (2.0 / (w - 1))
-
-        # 4. 生成左右眼网格：[1, H, W, 2]
-        # grid_l 采样坐标向左偏移，grid_r 采样坐标向右偏移
-        grid_l = torch.stack([grid_x - shift_norm, grid_y], dim=-1).unsqueeze(0)
-        grid_r = torch.stack([grid_x + shift_norm, grid_y], dim=-1).unsqueeze(0)
-
-        # 5. 高质量采样 (使用 bicubic 替代 bilinear 解决模糊问题)
-        # 修正：padding_mode 使用 'border' 代替 'replicate'
-        left_eye = torch.nn.functional.grid_sample(
-            frame_torch, grid_l, mode='bicubic', padding_mode='border', align_corners=True
-        )
-        right_eye = torch.nn.functional.grid_sample(
-            frame_torch, grid_r, mode='bicubic', padding_mode='border', align_corners=True
-        )
-
-        # 6. 横向拼接并返回 [1, 3, H, 2W]
-        return torch.cat([left_eye, right_eye], dim=-1)
+        # 根据模式输出
+        if is_half:
+            # 压缩回原始宽度
+            return torch.nn.functional.interpolate(combined, size=(h, w), mode='bilinear', align_corners=False)
+        else:
+            # 保持全宽度
+            return combined
