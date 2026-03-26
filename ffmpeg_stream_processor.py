@@ -123,20 +123,33 @@ class FFmpegStreamProcessor:
         # 注意：这里我们手动拼接 ffmpeg 命令，因为 python-ffmpeg 在处理多输入 map 时容易产生路径歧义
         cmd = [
             'ffmpeg', '-y',
-            # 输入 0: 来自 Python 的视频流
+            # 输入 0: 来自 Python 管道的处理后视频
             '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24', 
             '-s', f'{self.width}x{self.height}', '-r', str(self.framerate), 
             '-i', '-', 
-            # 输入 1: 原始流 (音频源) - 增加缓存控制
+            # 输入 1: 原始 RTMP 流 (音频源)
             '-fflags', 'nobuffer+genpts', '-flags', 'low_delay', 
             '-i', self.input_url,
-            # 映射与同步
-            '-map', '0:v:0', '-map', '1:a:0?',
+            
+            # 映射关系
+            '-map', '0:v:0',      # 取处理后的视频
+            '-map', '1:a:0?',     # 取原始流的音频 (如果有的话)
+            
+            # --- 视频编码设置 ---
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', 
             '-tune', 'zerolatency', '-b:v', self.bitrate,
-            # 关键参数：强制按照恒定帧率同步，音频跟随视频
-            '-vsync', 'cfr', 
-            '-af', 'aresample=async=1', # 自动拉伸音频以对齐视频时间戳
+            '-g', str(self.framerate * 2), # 设置 GOP 长度，提高 FLV 兼容性
+            
+            # --- 关键音频修复方案 ---
+            '-c:a', 'aac',           # 1. 放弃 copy，强制转码为 AAC (FLV 标准格式)
+            '-b:a', '128k',          # 2. 设定固定音频码率
+            '-ar', '44100',          # 3. 设定标准采样率 (44.1kHz 在 FLV 中最稳)
+            '-ac', '2',              # 4. 强制双声道
+            '-af', 'aresample=async=1000:min_hard_comp=0.100000:first_pts=0', # 5. 核心：重采样并强制对齐视频第一帧
+            
+            # --- 全局同步参数 ---
+            '-vsync', 'cfr',         # 强制恒定帧率同步
+            '-max_muxing_queue_size', '1024', # 增大混流队列，防止同步时报错
             '-f', 'flv', 
             self.output_url
         ]
