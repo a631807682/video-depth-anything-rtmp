@@ -173,7 +173,7 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, co
         
         if use_trt and engine_instance:
             # 1. 先转换：Numpy (H,W,C) BGR -> Tensor (1,3,H,W) RGB
-            frame_gpu = torch.as_tensor(frame.copy(), device=device).permute(2, 0, 1).unsqueeze(0).float()
+            frame_gpu = torch.from_numpy(np.ascontiguousarray(frame)).to(device).permute(2, 0, 1).unsqueeze(0).float()
             
             # 2. 传入转换后的 Tensor
             depth_gpu = engine_instance.estimate_depth(frame_gpu) 

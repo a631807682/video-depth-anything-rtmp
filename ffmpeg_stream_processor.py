@@ -33,8 +33,8 @@ class FFmpegStreamProcessor:
         self.output_thread = None
         self.process_thread = None
         
-        self.frame_queue = queue.Queue(maxsize=1)
-        self.output_queue = queue.Queue(maxsize=1)
+        self.frame_queue = queue.Queue(maxsize=10)
+        self.output_queue = queue.Queue(maxsize=10)
         self.running = False
         
         self.stats = {
@@ -101,7 +101,7 @@ class FFmpegStreamProcessor:
 
                 in_frame = np.frombuffer(in_bytes, np.uint8).reshape([self.height, self.width, 3])
                 try:
-                    self.frame_queue.put_nowait(in_frame)
+                    self.frame_queue.put(in_frame, block=False)
                 except queue.Full:
                     try:
                         self.frame_queue.get_nowait()
@@ -123,23 +123,21 @@ class FFmpegStreamProcessor:
         # 注意：这里我们手动拼接 ffmpeg 命令，因为 python-ffmpeg 在处理多输入 map 时容易产生路径歧义
         cmd = [
             'ffmpeg', '-y',
-            # 输入 0: Python 视频管道
+            # 输入 0: 来自 Python 的视频流
             '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24', 
             '-s', f'{self.width}x{self.height}', '-r', str(self.framerate), 
             '-i', '-', 
-            # 输入 1: 原始 RTMP 流 (仅用于提取音频)
-            '-fflags', 'nobuffer', '-flags', 'low_delay', 
+            # 输入 1: 原始流 (音频源) - 增加缓存控制
+            '-fflags', 'nobuffer+genpts', '-flags', 'low_delay', 
             '-i', self.input_url,
-            # 映射关系: 取第一个输入的视频，取第二个输入的音频
+            # 映射与同步
             '-map', '0:v:0', '-map', '1:a:0?',
-            # 视频编码设置
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', 
             '-tune', 'zerolatency', '-b:v', self.bitrate,
-            '-x264opts', 'keyint=30:min-keyint=30',
-            # 音频编码设置 (方案A: 直接拷贝)
-            '-c:a', 'copy',
-            # 强相同步关键参数
-            '-vsync', 'cfr', '-f', 'flv', 
+            # 关键参数：强制按照恒定帧率同步，音频跟随视频
+            '-vsync', 'cfr', 
+            '-af', 'aresample=async=1', # 自动拉伸音频以对齐视频时间戳
+            '-f', 'flv', 
             self.output_url
         ]
         
@@ -193,12 +191,6 @@ class FFmpegStreamProcessor:
                 
                 raw_frame = self.frame_queue.get(block=True, timeout=1.0)
                 
-                # 只有当队列真的积压超过 2 帧时才清理，防止 4090 误伤
-                if q_size > 2:
-                    while self.frame_queue.qsize() > 1:
-                        raw_frame = self.frame_queue.get_nowait()
-                        self.stats['dropped_frames'] += 1
-                
                 start_p = time.time()
                 processed_frame = process_func(raw_frame, device=device, output_mode=self.output_mode,
                     strength=self.strength, convergence=self.convergence, use_trt=self.use_trt)
@@ -209,7 +201,7 @@ class FFmpegStreamProcessor:
                     self.stats['processed_frames'] += 1
                     self.stats['avg_process_time'] = self.stats['avg_process_time'] * 0.9 + p_time * 0.1
                     try:
-                        self.output_queue.put_nowait(processed_frame)
+                        self.output_queue.put(processed_frame, block=False)
                     except queue.Full:
                         try:
                             self.output_queue.get_nowait()
