@@ -9,6 +9,7 @@ import tensorrt as trt
 import torch
 import cv2
 import numpy as np
+import torch.nn.functional as F
 
 class TRTEngine:
     def __init__(self, engine_path="./pretrained/depth_vits.engine", device='cuda'):
@@ -38,97 +39,72 @@ class TRTEngine:
         self.d_input = torch.empty(self.input_shape, device=device, dtype=self.dtype)
         self.d_output = torch.empty(self.output_shape, device=device, dtype=self.dtype)
 
-    def estimate_depth(self, frame):
-        h, w = frame.shape[:2]
-        with torch.no_grad():
-            # 1. 预处理：BGR -> RGB -> Tensor -> 归一化 -> Resize
-            # 注意：在 GPU 上完成所有操作以保证速度
-            img_gpu = torch.as_tensor(frame, device=self.device).permute(2, 0, 1).contiguous().float()
-            
-            # 缩放至模型输入尺寸 (518, 518)
-            img_resized = torch.nn.functional.interpolate(
-                img_gpu.unsqueeze(0), size=(518, 518), mode='bilinear', align_corners=False
-            )
-            
-            # 归一化 (匹配你之前的测试脚本: /0.5 - 1.0 等价于 /255 然后 (x-0.5)/0.5)
-            img_resized = (img_resized / 255.0 - 0.5) / 0.5
-            img_resized = img_resized.to(self.dtype)
+    def estimate_depth(self, frame_in):
+        # 如果传入的是 Numpy，在这里自动转 Tensor
+        if isinstance(frame_in, np.ndarray):
+            frame_tensor = torch.as_tensor(frame_in, device=self.device).permute(2, 0, 1).unsqueeze(0).float()
+        else:
+            frame_tensor = frame_in
 
-            # 2. 确保地址绑定 (部分 TRT 版本在 Context 切换时会丢失绑定，建议显式设置)
+        if frame_tensor.dim() == 3:
+            frame_tensor = frame_tensor.unsqueeze(0)
+            
+        _, _, h, w = frame_tensor.shape
+        
+        with torch.no_grad():
+            img_resized = torch.nn.functional.interpolate(
+                frame_tensor, size=(518, 518), mode='bilinear', align_corners=False
+            )
+            img_resized = ((img_resized / 255.0 - 0.5) / 0.5).to(self.dtype)
+
             self.context.set_tensor_address(self.input_name, img_resized.data_ptr())
             self.context.set_tensor_address(self.output_name, self.d_output.data_ptr())
-
-            # 3. 执行推理
-            # 使用当前显存流，避免不必要的同步
             self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
             
-            # 4. 后处理
-            depth = self.d_output.clone() # 拷贝一份防止被下一帧覆盖
+            # 直接在 GPU 上处理
+            depth = self.d_output.float()
+            depth_resized = torch.nn.functional.interpolate(
+                depth.view(1, 1, *self.output_shape[-2:]), 
+                size=(h, w), mode='bilinear', align_corners=False
+            ) # 保持 [1, 1, H, W] 方便后续拼接
+
+            d_min, d_max = depth_resized.min(), depth_resized.max()
+            depth_gpu = (depth_resized - d_min) / (d_max - d_min + 1e-5) * 255.0
+
+            return depth_gpu # 返回 [1, 1, H, W]
+
+    def create_sbs_half_gpu(self, frame_gpu, depth_gpu, strength=0.6, convergence=0.5):
+        # 统一维度
+        if frame_gpu.dim() == 3:
+            frame_gpu = frame_gpu.unsqueeze(0)
+        if depth_gpu.dim() == 2:
+            depth_gpu = depth_gpu.unsqueeze(0).unsqueeze(0)
             
-            # 移除 batch 和 channel 维度
-            if depth.dim() == 4:
-                depth = depth.squeeze(0).squeeze(0)
-            elif depth.dim() == 3:
-                depth = depth.squeeze(0)
-
-            # 5. 缩放回原图尺寸
-            depth = torch.nn.functional.interpolate(
-                depth.unsqueeze(0).unsqueeze(0), size=(h, w), mode='bilinear', align_corners=False
-            ).squeeze()
-
-            # 6. 归一化到 0-255
-            d_min, d_max = depth.min(), depth.max()
-            if d_max - d_min > 1e-5:
-                depth = (depth - d_min) / (d_max - d_min) * 255.0
-            else:
-                depth = torch.zeros_like(depth)
-
-            # 调试信息
-            if self.diag_counter % 50 == 0:
-                debug_img = depth.cpu().numpy().astype(np.uint8)
-                cv2.imwrite("./pretrained/debug_depth.png", debug_img)
-            self.diag_counter += 1
-
-            return depth.cpu().numpy().astype(np.uint8)
-
-    # def create_half_sbs_gpu(self, frame, depth_gpu, strength=0.6, convergence=0.5):
-    #     h, w = frame.shape[:2]
+        _, _, h, w = frame_gpu.shape
+        max_shift = w * 0.02 * strength
+        neutral_point = convergence * 255.0
         
-    #     # 1. 强制使用 float32 提高采样精度
-    #     frame_cp = cp.asarray(frame).astype(cp.float32)
-    #     depth_cp = cp.asarray(depth_gpu).astype(cp.float32)
+        disparity = (depth_gpu - neutral_point) / 255.0 * (max_shift / (w / 2))
+        
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(-1, 1, h, device=frame_gpu.device),
+            torch.linspace(-1, 1, w, device=frame_gpu.device),
+            indexing='ij'
+        )
+        base_grid = torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0)
 
-    #     # 2. 视差计算 (严格对齐原始公式)
-    #     max_shift = w * 0.02 * strength
-    #     neutral_point = convergence * 255.0
-    #     disparity = (depth_cp - neutral_point) / 255.0 * max_shift
+        # 左右眼位移
+        shift_l = base_grid.clone()
+        shift_l[..., 0] -= disparity.permute(0, 2, 3, 1)[..., 0] * 0.5
         
-    #     y, x = cp.mgrid[0:h, 0:w].astype(cp.float32)
+        shift_r = base_grid.clone()
+        shift_r[..., 0] += disparity.permute(0, 2, 3, 1)[..., 0] * 0.5
 
-    #     # 3. 左右位移映射
-    #     map_l_x = cp.clip(x - disparity * 0.5, 0, w - 1)
-    #     map_r_x = cp.clip(x + disparity * 0.5, 0, w - 1)
+        left_eye = torch.nn.functional.grid_sample(frame_gpu, shift_l, mode='bilinear', padding_mode='border', align_corners=True)
+        right_eye = torch.nn.functional.grid_sample(frame_gpu, shift_r, mode='bilinear', padding_mode='border', align_corners=True)
 
-    #     # 4. 执行高精度采样
-    #     coords_l = cp.stack([y, map_l_x])
-    #     coords_r = cp.stack([y, map_r_x])
-        
-    #     left_eye = cp.empty_like(frame_cp)
-    #     right_eye = cp.empty_like(frame_cp)
-        
-    #     for i in range(3):
-    #         # 强制 order=1 (线性) 并检查数据连续性
-    #         left_eye[..., i] = map_coordinates(frame_cp[..., i], coords_l, order=1, mode='nearest')
-    #         right_eye[..., i] = map_coordinates(frame_cp[..., i], coords_r, order=1, mode='nearest')
-
-    #     # 5. 拼接
-    #     combined = cp.hstack([left_eye, right_eye])
-        
-    #     # --- 画质关键：回到 CPU 后使用高画质缩放 ---
-    #     combined_cpu = cp.asnumpy(combined).astype(np.uint8)
-        
-    #     # 换用 INTER_CUBIC (双三次插值)，它比 INTER_LINEAR 锐利得多
-    #     return cv2.resize(combined_cpu, (w, h), interpolation=cv2.INTER_CUBIC)
+        combined = torch.cat([left_eye, right_eye], dim=3)
+        return torch.nn.functional.interpolate(combined, size=(h, w), mode='bilinear', align_corners=False)
 
 
     # TODO: 暂未修改效果不佳

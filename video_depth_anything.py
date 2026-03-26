@@ -172,18 +172,25 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, co
         t_infer = t_start
         
         if use_trt and engine_instance:
-            # 1. 深度估計 (GPU 內完成)
-            depth = engine_instance.estimate_depth(frame)
+            # 1. 先转换：Numpy (H,W,C) BGR -> Tensor (1,3,H,W) RGB
+            frame_gpu = torch.as_tensor(frame.copy(), device=device).permute(2, 0, 1).unsqueeze(0).float()
+            
+            # 2. 传入转换后的 Tensor
+            depth_gpu = engine_instance.estimate_depth(frame_gpu) 
+            
             t_infer = time.time()
             
             if output_mode == 'half-sbs':
-                out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
-                # out = engine_instance.create_half_sbs_gpu(frame, depth, strength, convergence)
+                out_gpu = engine_instance.create_sbs_half_gpu(frame_gpu, depth_gpu, strength, convergence)
+                # 统一转回 Numpy
+                out = out_gpu.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
             elif output_mode == 'sbs':
-                out_gpu = engine_instance.create_sbs_gpu(frame, depth, strength, convergence)
-                out = cp.asnumpy(out_gpu).astype(np.uint8)
+                # 同样建议实现全宽度的 create_sbs_gpu 以保持高性能
+                out_gpu = engine_instance.create_sbs_gpu(frame_gpu, depth_gpu, strength, convergence)
+                out = out_gpu.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
             else:
-                out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)
+                # 伪彩色映射 (目前在 CPU 上更快)
+                out = cv2.applyColorMap(depth_gpu.squeeze().cpu().numpy().astype(np.uint8), cv2.COLORMAP_MAGMA)
 
         else:
             # 1. GPU 核心流程：包含 GPU 缩放 + 推理 + GPU 尺寸恢复
