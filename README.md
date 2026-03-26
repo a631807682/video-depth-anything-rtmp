@@ -26,41 +26,10 @@ python main.py -i rtmp://127.0.0.1:1935/stream/2d -o rtmp://127.0.0.1:1935/strea
 #### Onnx
 
 ```bash
-# Onnx 下载
-https://huggingface.co/onnx-community/depth-anything-v2-small/
+python ./onnx_export.py
 ```
 
 #### tensorrt
-
-<!-- ```bash
-# download tensorrt
-## tensorrt
-https://developer.nvidia.com/nvidia-tensorrt-8x-download
-## cudnn
-https://developer.nvidia.com/rdp/cudnn-archive
-
-tar -xzvf TensorRT-8.5.1.7.Linux.x86_64-gnu.cuda-11.8.tar.gz
-
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/3dmodel/TensorRT-8.5.1.7/lib
-/opt/TensorRT-8.5.1.7/bin/trtexec --version
-
-tar -xvf cudnn-linux-x86_64-8.9.7.29_cuda11-archive.tar.xz
-cd cudnn-linux-x86_64-8.9.7.29_cuda11-archive
-sudo cp -P lib/* /opt/3dmodel/TensorRT-8.5.1.7/lib/
-# 拷贝头文件（如果以后需要编译代码的话）
-sudo cp include/* /opt/3dmodel/TensorRT-8.5.1.7/include/
-sudo chmod 755 /opt/3dmodel/TensorRT-8.5.1.7/lib/libcudnn*
-
-trtexec --version
-
-# 进入目录或指定全路径
-trtexec --onnx=./pretrained/depth_anything_v2_vits_fp16.onnx \
-        --saveEngine=./pretrained/depth_vits_fp16.engine \
-        --fp16 \
-        --minShapes=pixel_values:1x3x518x518 \
-        --optShapes=pixel_values:1x3x518x518 \
-        --maxShapes=pixel_values:1x3x518x518
-``` -->
 
 ```bash
 # TensorRT + CuPy

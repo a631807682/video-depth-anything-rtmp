@@ -1,4 +1,5 @@
 import tensorrt as trt
+import os
 
 def rebuild_engine(onnx_path, engine_path):
     logger = trt.Logger(trt.Logger.INFO)
@@ -9,7 +10,7 @@ def rebuild_engine(onnx_path, engine_path):
     
     # 1. 核心修复：配置动态维度 Profile
     profile = builder.create_optimization_profile()
-    input_name = "pixel_values" # 确保这里和你之前查到的输入名一致
+    input_name = "input" # 确保这里和你之前查到的输入名一致
     # 设置 [Min, Opt, Max] 形状，这里我们全部固定为 518
     fixed_shape = (1, 3, 518, 518)
     profile.set_shape(input_name, fixed_shape, fixed_shape, fixed_shape)
@@ -20,11 +21,15 @@ def rebuild_engine(onnx_path, engine_path):
         config.set_flag(trt.BuilderFlag.FP16)
     
     # 3. 解析 ONNX
-    with open(onnx_path, "rb") as f:
-        if not parser.parse(f.read()):
-            for error in range(parser.num_errors):
-                print(f"解析错误: {parser.get_error(error)}")
-            return
+    # 获取 ONNX 文件所在的目录路径
+    onnx_dir = os.path.dirname(os.path.abspath(onnx_path))
+    
+    # 核心修改：使用 parser.parse_from_file 而不是 parser.parse
+    # parse_from_file 会自动处理同级目录下的 .data 文件
+    if not parser.parse_from_file(onnx_path):
+        for error in range(parser.num_errors):
+            print(f"解析错误: {parser.get_error(error)}")
+        return
 
     print(f"正在构建 Engine (输入节点: {input_name})...")
     # 4. 构建并序列化
@@ -40,4 +45,4 @@ def rebuild_engine(onnx_path, engine_path):
 
 if __name__ == "__main__":
     # 确保使用你那个包含 pixel_values 节点的 ONNX
-    rebuild_engine("./pretrained/depth_anything_v2_vits_fp16.onnx", "./pretrained/depth_vits_fp16.engine")
+    rebuild_engine("./pretrained/depth_anything_v2_vits.onnx", "./pretrained/depth_vits.engine")

@@ -177,9 +177,10 @@ def process_frame(frame, device='cuda', output_mode='half-sbs', strength=1.2, co
             t_infer = time.time()
             
             if output_mode == 'half-sbs':
-                out = engine_instance.create_half_sbs_gpu(frame, depth, strength, convergence)
+                out = create_sbs_half(frame, depth, strength=strength, convergence=convergence)
+                # out = engine_instance.create_half_sbs_gpu(frame, depth, strength, convergence)
             elif output_mode == 'sbs':
-                out_gpu = engine_instance.create_sbs_gpu(frame, depth_gpu, strength, convergence)
+                out_gpu = engine_instance.create_sbs_gpu(frame, depth, strength, convergence)
                 out = cp.asnumpy(out_gpu).astype(np.uint8)
             else:
                 out = cv2.applyColorMap(depth, cv2.COLORMAP_MAGMA)

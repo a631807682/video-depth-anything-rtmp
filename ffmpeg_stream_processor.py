@@ -188,13 +188,16 @@ class FFmpegStreamProcessor:
     def process_frames_thread(self, process_func, device):
         while self.running:
             try:
+                # 1. 监控：获取帧时的队列状态
+                q_size = self.frame_queue.qsize()
+                
                 raw_frame = self.frame_queue.get(block=True, timeout=1.0)
-                # 抢占式清空：确保处理最新帧
-                while self.frame_queue.qsize() > 0:
-                    try:
+                
+                # 只有当队列真的积压超过 2 帧时才清理，防止 4090 误伤
+                if q_size > 2:
+                    while self.frame_queue.qsize() > 1:
                         raw_frame = self.frame_queue.get_nowait()
                         self.stats['dropped_frames'] += 1
-                    except: break
                 
                 start_p = time.time()
                 processed_frame = process_func(raw_frame, device=device, output_mode=self.output_mode,
