@@ -71,9 +71,9 @@ def estimate_depth(frame, device='cuda'):
 
         img = img / 255.0  # 归一化
         
-        # 强制缩放到模型要求的推理尺寸 (如 518)
+        # 强制缩放到模型要求的推理尺寸 (如 728)
         # 这一步在 GPU 上做比 cv2.resize 快得多
-        inference_size = 518
+        inference_size = 728
         img = torch.nn.functional.interpolate(img, size=(inference_size, inference_size), mode='bilinear', align_corners=False)
         
         t_pre = time.time()

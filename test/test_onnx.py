@@ -10,7 +10,7 @@ img = Image.open('test.jpg').convert('RGB')
 orig_w, orig_h = img.size
 
 # 2. 预处理
-input_size = (518, 518)  # 根据你的模型实际输入尺寸调整
+input_size = (728, 728)  # 根据你的模型实际输入尺寸调整
 transform = transforms.Compose([
     transforms.Resize(input_size),
     transforms.ToTensor(),

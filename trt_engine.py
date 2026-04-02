@@ -53,7 +53,7 @@ class TRTEngine:
         
         with torch.no_grad():
             img_resized = torch.nn.functional.interpolate(
-                frame_tensor, size=(518, 518), mode='bilinear', align_corners=False
+                frame_tensor, size=(728, 728), mode='bilinear', align_corners=False
             )
             img_resized = ((img_resized / 255.0 - 0.5) / 0.5).to(self.dtype)
 

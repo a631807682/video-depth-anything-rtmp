@@ -11,8 +11,8 @@ def rebuild_engine(onnx_path, engine_path):
     # 1. 核心修复：配置动态维度 Profile
     profile = builder.create_optimization_profile()
     input_name = "input" # 确保这里和你之前查到的输入名一致
-    # 设置 [Min, Opt, Max] 形状，这里我们全部固定为 518
-    fixed_shape = (1, 3, 518, 518)
+    # 设置 [Min, Opt, Max] 形状，这里我们全部固定为 728
+    fixed_shape = (1, 3, 728, 728)
     profile.set_shape(input_name, fixed_shape, fixed_shape, fixed_shape)
     config.add_optimization_profile(profile)
 

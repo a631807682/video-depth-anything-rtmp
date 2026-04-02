@@ -33,7 +33,7 @@ def do_export():
     print("🚀 正在屏蔽 xformers 并强制使用基础数学 Attention 导出...")
     # 修改导出脚本的关键部分
     with patch('torch.nn.functional.scaled_dot_product_attention', manual_sdpa):
-        dummy_input = torch.randn(1, 3, 518, 518).to(device)
+        dummy_input = torch.randn(1, 3, 728, 728).to(device)
         with torch.no_grad():
             torch.onnx.export(
                 model, 

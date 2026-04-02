@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 engine_path = '../pretrained/depth_vits.engine' 
 input_image_path = 'test.jpg'
 output_image_path = 'depth_engine.png'
-input_size = (518, 518)
+input_size = (728, 728)
 
 # 1. 加载 Engine
 logger = trt.Logger(trt.Logger.WARNING)
