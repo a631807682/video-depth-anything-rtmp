@@ -40,7 +40,6 @@ class TRTEngine:
         self.d_output = torch.empty(self.output_shape, device=device, dtype=self.dtype)
 
     def estimate_depth(self, frame_in):
-        # 如果传入的是 Numpy，在这里自动转 Tensor
         if isinstance(frame_in, np.ndarray):
             frame_tensor = torch.as_tensor(frame_in, device=self.device).permute(2, 0, 1).unsqueeze(0).float()
         else:
@@ -51,27 +50,42 @@ class TRTEngine:
             
         _, _, h, w = frame_tensor.shape
         
+        # 1. 计算保持比例的缩放尺寸 (长边为 728)
+        scale = 728 / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        
         with torch.no_grad():
+            # 2. 比例缩放
             img_resized = torch.nn.functional.interpolate(
-                frame_tensor, size=(728, 728), mode='bilinear', align_corners=False
+                frame_tensor, size=(new_h, new_w), mode='bilinear', align_corners=False
             )
-            img_resized = ((img_resized / 255.0 - 0.5) / 0.5).to(self.dtype)
-
-            self.context.set_tensor_address(self.input_name, img_resized.data_ptr())
+            
+            # 3. Padding 补齐到 728x728 (在右侧和下方补黑边)
+            pad_h = 728 - new_h
+            pad_w = 728 - new_w
+            # F.pad 参数顺序是 [左, 右, 上, 下]
+            img_padded = torch.nn.functional.pad(img_resized, (0, pad_w, 0, pad_h), value=0)
+            
+            # 4. 归一化并推理
+            img_input = ((img_padded / 255.0 - 0.5) / 0.5).to(self.dtype)
+            self.context.set_tensor_address(self.input_name, img_input.data_ptr())
             self.context.set_tensor_address(self.output_name, self.d_output.data_ptr())
             self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
             
-            # 直接在 GPU 上处理
-            depth = self.d_output.float()
+            # 5. 获取 728x728 的输出并裁剪出有效区域
+            depth_raw = self.d_output.view(1, 1, 728, 728)
+            depth_valid = depth_raw[:, :, :new_h, :new_w] # 只取左上角有画面的部分
+            
+            # 6. 拉回到视频原始尺寸
             depth_resized = torch.nn.functional.interpolate(
-                depth.view(1, 1, *self.output_shape[-2:]), 
+                depth_valid.float(), 
                 size=(h, w), mode='bilinear', align_corners=False
-            ) # 保持 [1, 1, H, W] 方便后续拼接
+            )
 
             d_min, d_max = depth_resized.min(), depth_resized.max()
             depth_gpu = (depth_resized - d_min) / (d_max - d_min + 1e-5) * 255.0
 
-            return depth_gpu # 返回 [1, 1, H, W]
+            return depth_gpu
 
     def create_sbs_generic_gpu(self, frame_gpu, depth_gpu, strength=0.6, convergence=0.5, is_half=True):
         # 统一维度
