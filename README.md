@@ -18,7 +18,7 @@ https://huggingface.co/depth-anything/Depth-Anything-V2-Small
 ### 命令执行
 
 ```bash
-python main.py -i rtmp://127.0.0.1:1935/stream/2d -o rtmp://127.0.0.1:1935/stream/3d -r 30 -b 3M -m half-sbs -d auto
+python main.py -i rtmp://127.0.0.1:1935/stream/2d -o rtmp://127.0.0.1:1935/stream/3d -r 30 -b 3M -m half-sbs -d auto --trt
 ```
 
 ### TensorRT 加速
